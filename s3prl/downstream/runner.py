@@ -183,7 +183,6 @@ class Runner():
     def _get_downstream(self):
         expert = importlib.import_module(f"s3prl.downstream.{self.args.downstream}.expert")
         Downstream = getattr(expert, "DownstreamExpert")
-
         model = Downstream(
             upstream_dim = self.featurizer.model.output_dim,
             upstream_rate = self.featurizer.model.downsample_rate,
@@ -484,7 +483,44 @@ class Runner():
 
         return [] if type(save_names) is not list else save_names
 
+
+    def enhance_inference(self, split="inference", logger=None, global_step=0):
+        ## Bad manual coding ## 
+
+        dataloader = self.downstream.model.get_dataloader(split)
+        logger = SummaryWriter(self.args.expdir)
+        inference_steps = round(len(dataloader)) # * evaluate_ratio)
+        batch_ids = []
+        records = defaultdict(list)
+
+        for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc=split, total=inference_steps)):
+            if batch_id > inference_steps:
+                break
+
+            wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
+            with torch.no_grad():
+                features = self.upstream.model(wavs)
+                features = self.featurizer.model(wavs, features)
+                self.downstream.model.inference(
+                    split,
+                    features, *others,
+                    records = records,
+                    batch_id = batch_id,
+                )
+                batch_ids.append(batch_id)
+
+        save_names = self.downstream.model.log_records(
+            split,
+            records = records,
+            logger = logger,
+            global_step = global_step,
+            batch_ids = batch_ids,
+            total_batch_num = len(dataloader),
+        )
+
     def inference(self):
+        #import pdb; pdb.set_trace()
+        ## bad coding ##
         filepath = Path(self.args.evaluate_split)
         assert filepath.is_file(), filepath
         filename = filepath.stem

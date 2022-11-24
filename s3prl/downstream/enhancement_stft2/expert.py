@@ -18,6 +18,7 @@ import numpy as np
 from pathlib import Path
 from collections import defaultdict
 import librosa
+import soundfile
 
 # -------------#
 import torch
@@ -28,7 +29,7 @@ import torch.nn.functional as F
 
 # -------------#
 from .model import SepRNN
-from .dataset import SeparationDataset
+from .dataset import SeparationDataset, SeparationInferenceDataset
 from asteroid.metrics import get_metrics
 from .loss import EnhLoss, SISDRLoss
 
@@ -69,40 +70,49 @@ class DownstreamExpert(nn.Module):
         self.modelrc = downstream_expert["modelrc"]
         self.expdir = expdir
 
-        self.train_dataset = SeparationDataset(
-                data_dir=self.loaderrc["train_dir"],
+#        self.train_dataset = SeparationDataset(
+#                data_dir=self.loaderrc["train_dir"],
+#                rate=self.datarc['rate'],
+#                src=self.datarc['src'],
+#                tgt=self.datarc['tgt'],
+#                n_fft=self.datarc['n_fft'],
+#                hop_length=self.datarc['hop_length'],
+#                win_length=self.datarc['win_length'],
+#                window=self.datarc['window'],
+#                center=self.datarc['center'],
+#            )
+#        self.dev_dataset = SeparationDataset(
+#                data_dir=self.loaderrc["dev_dir"],
+#                rate=self.datarc['rate'],
+#                src=self.datarc['src'],
+#                tgt=self.datarc['tgt'],
+#                n_fft=self.datarc['n_fft'],
+#                hop_length=self.datarc['hop_length'],
+#                win_length=self.datarc['win_length'],
+#                window=self.datarc['window'],
+#                center=self.datarc['center'],
+#        )
+#        self.test_dataset = SeparationDataset(
+#                data_dir=self.loaderrc["test_dir"],
+#                rate=self.datarc['rate'],
+#                src=self.datarc['src'],
+#                tgt=self.datarc['tgt'],
+#                n_fft=self.datarc['n_fft'],
+#                hop_length=self.datarc['hop_length'],
+#                win_length=self.datarc['win_length'],
+#                window=self.datarc['window'],
+#                center=self.datarc['center'],
+#        )
+        self.inference_dataset = SeparationInferenceDataset(
+                data_dir=self.loaderrc["inference_dir"],
                 rate=self.datarc['rate'],
                 src=self.datarc['src'],
-                tgt=self.datarc['tgt'],
-                n_fft=self.datarc['n_fft'],
-                hop_length=self.datarc['hop_length'],
-                win_length=self.datarc['win_length'],
-                window=self.datarc['window'],
-                center=self.datarc['center'],
-            )
-        self.dev_dataset = SeparationDataset(
-                data_dir=self.loaderrc["dev_dir"],
-                rate=self.datarc['rate'],
-                src=self.datarc['src'],
-                tgt=self.datarc['tgt'],
                 n_fft=self.datarc['n_fft'],
                 hop_length=self.datarc['hop_length'],
                 win_length=self.datarc['win_length'],
                 window=self.datarc['window'],
                 center=self.datarc['center'],
         )
-        self.test_dataset = SeparationDataset(
-                data_dir=self.loaderrc["test_dir"],
-                rate=self.datarc['rate'],
-                src=self.datarc['src'],
-                tgt=self.datarc['tgt'],
-                n_fft=self.datarc['n_fft'],
-                hop_length=self.datarc['hop_length'],
-                win_length=self.datarc['win_length'],
-                window=self.datarc['window'],
-                center=self.datarc['center'],
-        )
-
         if self.modelrc["model"] == "SepRNN":
             self.model = SepRNN(
                 input_dim=self.upstream_dim,
@@ -150,7 +160,7 @@ class DownstreamExpert(nn.Module):
         """
         Args:
             mode: string
-                'train', 'dev' or 'test'
+                'train', 'dev' or 'test' // add 'inference' which has only input data(no target)
         Return:
             a torch.utils.data.DataLoader returning each batch in the format of:
             [wav1, wav2, ...], your_other_contents1, your_other_contents2, ...
@@ -166,6 +176,252 @@ class DownstreamExpert(nn.Module):
             return self._get_eval_dataloader(self.dev_dataset)
         elif mode == "test":
             return self._get_eval_dataloader(self.test_dataset)
+        else: # mode == "enhance_inference":
+            return self._get_eval_dataloader(self.inference_dataset)
+
+
+    def inference(self, mode, features, uttname_list, source_attr, source_wav, feat_length, wav_length, records, **kwargs):
+        """
+        Args:
+            mode: string
+                'train', 'dev' or 'test' for this forward step
+
+            features:
+                list of unpadded features [feat1, feat2, ...]
+                each feat is in torch.FloatTensor and already
+                put in the device assigned by command-line args
+
+            uttname_list:
+                list of utterance names
+
+            source_attr:
+                source_attr is a dict containing the STFT information 
+                for the mixture. source_attr['magnitude'] stores the STFT
+                magnitude, source_attr['phase'] stores the STFT phase and
+                source_attr['stft'] stores the raw STFT feature. The shape
+                is [bs, max_length, feat_dim]
+
+            source_wav:
+                source_wav contains the raw waveform for the mixture,
+                and it has the shape of [bs, max_wav_length]
+
+            target_attr:
+                similar to source_attr, it contains the STFT information
+                for individual sources. It only has two keys ('magnitude' and 'phase')
+                target_attr['magnitude'] is a list of length n_srcs, and
+                target_attr['magnitude'][i] has the shape [bs, max_length, feat_dim]
+
+            target_wav_list:
+                target_wav_list contains the raw waveform for the individual
+                sources, and it is a list of length n_srcs. target_wav_list[0]
+                has the shape [bs, max_wav_length]
+
+            "312
+            feat_length:
+                length of STFT features
+
+            wav_length:
+                length of raw waveform
+
+            records:
+                defaultdict(list), by appending contents into records,
+                these contents can be averaged and logged on Tensorboard
+                later by self.log_records every log_step
+
+        Return:
+            loss:
+                the loss to be optimized, should not be detached
+        """
+        if self.upstream_rate == 320:
+            features_upsample = [torch.repeat_interleave(feat, 2, dim=0) for feat in features]
+            features = features_upsample
+        
+        # match the feature length to STFT feature length
+        features = match_length(features, feat_length)
+        features = pack_sequence(features)
+        mask_list = self.model(features)
+        assert len(mask_list) == 1
+
+        # evaluate the enhancement quality of predict sources
+        #if mode == 'dev' or mode == 'test':
+        if self.log == 'none':
+            predict_stfts = torch.squeeze(mask_list[0].cpu() * source_attr['stft'])
+            predict_stfts_np = np.transpose(predict_stfts.data.numpy())
+        elif self.log == 'log1p':
+            phase = source_attr['stft'] / (source_attr['stft'].abs() + EPS)
+            predict_stfts = torch.expm1(mask_list[0].cpu() * torch.log1p(source_attr['stft'].abs())) * phase
+            predict_stfts = torch.squeeze(predict_stfts)
+            predict_stfts_np = np.transpose(predict_stfts.data.numpy())
+        else:
+            raise ValueError("log type not defined.")
+
+            # assert len(wav_length) == 1
+        if len(wav_length) != self.loaderrc['eval_batchsize']:
+            print('dev/eval batch is not 1')
+
+
+            # reconstruct the signal using iSTFT
+        predict_srcs_np = librosa.util.fix_length(librosa.istft(predict_stfts_np,
+            hop_length=self.datarc['hop_length'],
+            win_length=self.datarc['win_length'], 
+            window=self.datarc['window'], 
+            center=self.datarc['center']), size=wav_length[0])
+        predict_srcs_np = np.expand_dims(predict_srcs_np, axis=0)
+#            gt_srcs_np = torch.cat(target_wav_list, 0).data.cpu().numpy()
+        mix_np = source_wav.data.cpu().numpy()
+#            utt_metrics = get_metrics(
+#                mix_np,
+#                gt_srcs_np,
+#                predict_srcs_np,
+#                sample_rate = self.datarc['rate'],
+#                metrics_list = COMPUTE_METRICS,
+#                compute_permutation=False,
+#                ignore_metrics_errors=True, # add....
+#                filename=uttname_list,
+#            )
+
+#            for metric in COMPUTE_METRICS:
+#                input_metric = "input_" + metric
+#                assert metric in utt_metrics and input_metric in utt_metrics
+# #               try:
+# #                   imp = utt_metrics[metric] - utt_metrics[input_metric]
+# #               except:
+# #                   import pdb; pdb.set_trace()
+#                if metric not in records:
+#                    records[metric] = []
+#                if metric == "si_sdr":
+#                   imp = utt_metrics[metric] - utt_metrics[input_metric]
+#                   records[metric].append(imp)
+#                elif metric == "stoi" or metric == "pesq":
+#                    if utt_metrics[metric] == None: # add to avoid training failure
+#                        utt_metrics[metric] = records[metric][-1]
+#                    records[metric].append(utt_metrics[metric])
+#                else:
+#                    raise ValueError("Metric type not defined.")
+
+        assert 'batch_id' in kwargs
+#        if mode == 'test':
+        if True:
+            PATH = '/root/inference/8k-wavlm'
+            mix_wav, hypo_wav = mix_np, predict_srcs_np
+#                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
+#                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None)  
+#                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
+            utt = uttname_list[0]
+#                import pdb; pdb.set_trace()
+#            soundfile.write(os.path.join(PATH,'mix',utt.split('/')[:-4]+'_mix.wav'),mix_wav.T, self.datarc['rate'])
+#            soundfile.write(os.path.join(PATH,'ref',utt+'_ref.wav'),ref_wav.T, self.datarc['rate'])
+            soundfile.write(os.path.join(PATH,'clean',utt.split('/')[-1][:-4]+'_hypo.wav'),hypo_wav.T, self.datarc['rate'])
+#        else:
+        if True:
+#            if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
+           records['mix'].append(mix_np)
+           records['hypo'].append(predict_srcs_np)
+#               records['ref'].append(gt_srcs_np)
+           records['uttname'].append(uttname_list[0])
+
+#        if self.loss_type == "MSE" or self.loss_type == "L1":
+#            loss = self.objective.compute_loss(mask_list, feat_length, source_attr, target_attr)
+#        else:
+#            raise ValueError("Loss type not defined.")
+#
+#        records["loss"].append(loss.item())
+#        return loss
+
+    # interface
+    def log_records(
+        self, mode, records, logger, global_step, batch_ids, total_batch_num, **kwargs
+    ):
+        """
+        Args:
+            mode: string
+                'train':
+                    records and batchids contain contents for `log_step` batches
+                    `log_step` is defined in your downstream config
+                    eg. downstream/example/config.yaml
+                'dev' or 'test' :
+                    records and batchids contain contents for the entire evaluation dataset
+
+            records:
+                defaultdict(list), contents already appended
+
+            logger:
+                Tensorboard SummaryWriter
+                please use f'{prefix}your_content_name' as key name
+                to log your customized contents
+
+            global_step:
+                The global_step when training, which is helpful for Tensorboard logging
+
+            batch_ids:
+                The batches contained in records when enumerating over the dataloader
+
+            total_batch_num:
+                The total amount of batches in the dataloader
+
+        Return:
+            a list of string
+                Each string is a filename we wish to use to save the current model
+                according to the evaluation result, like the best.ckpt on the dev set
+                You can return nothing or an empty list when no need to save the checkpoint
+        """
+        if mode == 'train':
+            avg_loss = np.mean(records["loss"])
+            logger.add_scalar(
+                f"enhancement_stft2/{mode}-loss", avg_loss, global_step=global_step
+            )
+            return []
+        elif mode == 'dev' or mode =='test':
+            eval_result = open(Path(self.expdir) / f"{mode}_metrics.txt", "w")
+            avg_loss = np.mean(records["loss"])
+            logger.add_scalar(
+                f"enhancement_stft2/{mode}-loss", avg_loss, global_step=global_step
+            )
+            for metric in COMPUTE_METRICS:
+                avg_metric = np.mean(records[metric])
+                if mode == "test" or mode == "dev":
+                    print("Average {} of {} utts is {:.4f}".format(metric, len(records[metric]), avg_metric))
+                    print(metric, avg_metric, file=eval_result)
+
+                logger.add_scalar(
+                    f'enhancement_stft2/{mode}-'+metric,
+                    avg_metric,
+                    global_step=global_step
+                )
+
+            save_ckpt = []
+            assert 'pesq' in records
+            if mode == "dev" and np.mean(records['pesq']) > self.best_score:
+                self.best_score = torch.ones(1) * np.mean(records['pesq'])
+                save_ckpt.append(f"best-states-{mode}.ckpt")
+
+            for s in ['mix', 'ref', 'hypo', 'uttname']:
+                assert s in records
+            for i in range(len(records['uttname'])):
+                utt = records['uttname'][i]
+                mix_wav, ref_wav, hypo_wav = records['mix'][i][0, :], records['ref'][i][0, :], records['hypo'][i][0, :]
+                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
+                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None)
+                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
+                logger.add_audio('step{:06d}_{}_mix.wav'.format(global_step, utt), mix_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                logger.add_audio('step{:06d}_{}_ref.wav'.format(global_step, utt), ref_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                logger.add_audio('step{:06d}_{}_hypo.wav'.format(global_step, utt), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+
+            return save_ckp
+            
+        else: #added for inference
+            for s in ['mix', 'hypo', 'uttname']:
+                assert s in records
+            for i in range(len(records['uttname'])):
+                utt = records['uttname'][i]
+                mix_wav, hypo_wav = records['mix'][i][0, :],records['hypo'][i][0, :]
+                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
+
+                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
+                logger.add_audio('{}'.format(utt), mix_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                #logger.add_audio('step{:06d}_{}_ref.wav'.format(global_step, utt), ref_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                logger.add_audio('{}_hypo.wav'.format(utt[:-4]), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+
 
     def forward(self, mode, features, uttname_list, source_attr, source_wav, target_attr, target_wav_list, feat_length, wav_length, records, **kwargs):
         """
@@ -225,7 +481,7 @@ class DownstreamExpert(nn.Module):
         # match the feature length to STFT feature length
         features = match_length(features, feat_length)
         features = pack_sequence(features)
-        mask_list = self.model(features)
+        mask_list = self.model( ) #features)
         assert len(mask_list) == 1
 
         # evaluate the enhancement quality of predict sources
@@ -241,7 +497,12 @@ class DownstreamExpert(nn.Module):
             else:
                 raise ValueError("log type not defined.")
 
-            assert len(wav_length) == 1
+            # assert len(wav_length) == 1
+            if len(wav_length) != self.loaderrc['eval_batchsize']:
+                print('dev/eval batch is not 1')
+                import pdb; pdb.set_trace()
+
+
             # reconstruct the signal using iSTFT
             predict_srcs_np = librosa.util.fix_length(librosa.istft(predict_stfts_np,
                 hop_length=self.datarc['hop_length'],
@@ -251,7 +512,6 @@ class DownstreamExpert(nn.Module):
             predict_srcs_np = np.expand_dims(predict_srcs_np, axis=0)
             gt_srcs_np = torch.cat(target_wav_list, 0).data.cpu().numpy()
             mix_np = source_wav.data.cpu().numpy()
-
             utt_metrics = get_metrics(
                 mix_np,
                 gt_srcs_np,
@@ -259,27 +519,47 @@ class DownstreamExpert(nn.Module):
                 sample_rate = self.datarc['rate'],
                 metrics_list = COMPUTE_METRICS,
                 compute_permutation=False,
+                ignore_metrics_errors=True, # add....
+                filename=uttname_list,
             )
 
             for metric in COMPUTE_METRICS:
                 input_metric = "input_" + metric
                 assert metric in utt_metrics and input_metric in utt_metrics
-                imp = utt_metrics[metric] - utt_metrics[input_metric]
+ #               try:
+ #                   imp = utt_metrics[metric] - utt_metrics[input_metric]
+ #               except:
+ #                   import pdb; pdb.set_trace()
                 if metric not in records:
                     records[metric] = []
                 if metric == "si_sdr":
-                    records[metric].append(imp)
+                   imp = utt_metrics[metric] - utt_metrics[input_metric]
+                   records[metric].append(imp)
                 elif metric == "stoi" or metric == "pesq":
+                    if utt_metrics[metric] == None: # add to avoid training failure
+                        utt_metrics[metric] = records[metric][-1]
                     records[metric].append(utt_metrics[metric])
                 else:
                     raise ValueError("Metric type not defined.")
 
             assert 'batch_id' in kwargs
-            if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
-                records['mix'].append(mix_np)
-                records['hypo'].append(predict_srcs_np)
-                records['ref'].append(gt_srcs_np)
-                records['uttname'].append(uttname_list[0])
+            if mode == 'test':
+                PATH = '/home/koo/enhancelink/enhancedoutput_stft'
+                mix_wav, ref_wav, hypo_wav = mix_np, gt_srcs_np, predict_srcs_np
+#                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
+#                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None) 
+#                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
+                utt = uttname_list[0]
+#                import pdb; pdb.set_trace()
+                soundfile.write(os.path.join(PATH,'mix',utt+'_mix.wav'),mix_wav.T, self.datarc['rate'])
+                soundfile.write(os.path.join(PATH,'ref',utt+'_ref.wav'),ref_wav.T, self.datarc['rate'])
+                soundfile.write(os.path.join(PATH,'hypo',utt+'_hypo.wav'),hypo_wav.T, self.datarc['rate'])
+            else:
+                if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
+                   records['mix'].append(mix_np)
+                   records['hypo'].append(predict_srcs_np)
+                   records['ref'].append(gt_srcs_np)
+                   records['uttname'].append(uttname_list[0])
 
         if self.loss_type == "MSE" or self.loss_type == "L1":
             loss = self.objective.compute_loss(mask_list, feat_length, source_attr, target_attr)
@@ -288,84 +568,3 @@ class DownstreamExpert(nn.Module):
 
         records["loss"].append(loss.item())
         return loss
-
-    # interface
-    def log_records(
-        self, mode, records, logger, global_step, batch_ids, total_batch_num, **kwargs
-    ):
-        """
-        Args:
-            mode: string
-                'train':
-                    records and batchids contain contents for `log_step` batches
-                    `log_step` is defined in your downstream config
-                    eg. downstream/example/config.yaml
-                'dev' or 'test' :
-                    records and batchids contain contents for the entire evaluation dataset
-
-            records:
-                defaultdict(list), contents already appended
-
-            logger:
-                Tensorboard SummaryWriter
-                please use f'{prefix}your_content_name' as key name
-                to log your customized contents
-
-            global_step:
-                The global_step when training, which is helpful for Tensorboard logging
-
-            batch_ids:
-                The batches contained in records when enumerating over the dataloader
-
-            total_batch_num:
-                The total amount of batches in the dataloader
-
-        Return:
-            a list of string
-                Each string is a filename we wish to use to save the current model
-                according to the evaluation result, like the best.ckpt on the dev set
-                You can return nothing or an empty list when no need to save the checkpoint
-        """
-        if mode == 'train':
-            avg_loss = np.mean(records["loss"])
-            logger.add_scalar(
-                f"enhancement_stft2/{mode}-loss", avg_loss, global_step=global_step
-            )
-            return []
-        else:
-            eval_result = open(Path(self.expdir) / f"{mode}_metrics.txt", "w")
-            avg_loss = np.mean(records["loss"])
-            logger.add_scalar(
-                f"enhancement_stft2/{mode}-loss", avg_loss, global_step=global_step
-            )
-            for metric in COMPUTE_METRICS:
-                avg_metric = np.mean(records[metric])
-                if mode == "test" or mode == "dev":
-                    print("Average {} of {} utts is {:.4f}".format(metric, len(records[metric]), avg_metric))
-                    print(metric, avg_metric, file=eval_result)
-
-                logger.add_scalar(
-                    f'enhancement_stft2/{mode}-'+metric,
-                    avg_metric,
-                    global_step=global_step
-                )
-
-            save_ckpt = []
-            assert 'pesq' in records
-            if mode == "dev" and np.mean(records['pesq']) > self.best_score:
-                self.best_score = torch.ones(1) * np.mean(records['pesq'])
-                save_ckpt.append(f"best-states-{mode}.ckpt")
-
-            for s in ['mix', 'ref', 'hypo', 'uttname']:
-                assert s in records
-            for i in range(len(records['uttname'])):
-                utt = records['uttname'][i]
-                mix_wav, ref_wav, hypo_wav = records['mix'][i][0, :], records['ref'][i][0, :], records['hypo'][i][0, :]
-                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
-                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None)
-                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
-                logger.add_audio('step{:06d}_{}_mix.wav'.format(global_step, utt), mix_wav, global_step=global_step, sample_rate=self.datarc['rate'])
-                logger.add_audio('step{:06d}_{}_ref.wav'.format(global_step, utt), ref_wav, global_step=global_step, sample_rate=self.datarc['rate'])
-                logger.add_audio('step{:06d}_{}_hypo.wav'.format(global_step, utt), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
-
-            return save_ckpt

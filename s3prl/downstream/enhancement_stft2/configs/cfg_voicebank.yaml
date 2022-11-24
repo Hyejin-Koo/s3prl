@@ -17,7 +17,7 @@ optimizer:
 downstream_expert:
   datarc:
     num_speakers: 1
-    rate: 16000
+    rate: 8000 #16000
     src: ['noisy']
     tgt: ['clean']
     n_fft: 512
@@ -33,6 +33,7 @@ downstream_expert:
     train_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/train
     dev_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/dev
     test_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/test
+    inference_dir: /data/private/noisy_callcenter/clean/
   
   modelrc: 
     model: SepRNN
