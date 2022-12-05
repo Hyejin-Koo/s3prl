@@ -22,6 +22,7 @@ from s3prl import hub
 from s3prl.optimizers import get_optimizer
 from s3prl.schedulers import get_scheduler
 from s3prl.upstream.interfaces import Featurizer
+#from s3prl.nn import Featurizer # it doesn't solve the eval batch problem..
 from s3prl.utility.helper import is_leader_process, get_model_state, show, defaultdict
 
 from huggingface_hub import HfApi, HfFolder, Repository
@@ -189,7 +190,11 @@ class Runner():
             **self.config,
             **vars(self.args)
         ).to(self.args.device)
-
+#
+#        model_freeze = self.args.upstream_model_unfreeze, # add
+#        if model_freeze: # add
+#            return
+#        else:
         return self._init_model(
             model = model,
             name = 'Downstream',

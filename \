@@ -70,7 +70,7 @@ def get_downstream_args():
     parser.add_argument('--upstream_revision', help="The commit hash of the specified HuggingFace Repository")
 
     # ADD
-    parser.add_argument('--upstream_model_unfreeze', action='store_true',  help='follow pre-train from pre-trained model')
+    parser.add_argument('upstream_model_unfreeze', action='stroe_true',  help='follow pre-train from pre-trained model')
 
 
     # experiment directory, choose one to specify

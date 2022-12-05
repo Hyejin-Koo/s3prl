@@ -17,7 +17,7 @@ optimizer:
 downstream_expert:
   datarc:
     num_speakers: 1
-    rate: 8000 #16000
+    rate: 16000 #22050
     src: ['noisy']
     tgt: ['clean']
     n_fft: 512
@@ -28,12 +28,13 @@ downstream_expert:
 
   loaderrc:
     num_workers: 4
-    train_batchsize: 8
-    eval_batchsize: 1
-    train_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/train
-    dev_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/dev
-    test_dir: ./downstream/enhancement_stft2/datasets/voicebank/wav16k/test
-    inference_dir: /data/private/noisy_callcenter/clean/
+    train_batchsize: 12 #32
+    eval_batchsize: 1  #Can't I make it multiple?
+    train_dir: ./s3prl/downstream/enhancement_stft2/processed/AIhub/train
+    dev_dir: ./s3prl/downstream/enhancement_stft2/processed/AIhub/dev
+    test_dir: ./s3prl/downstream/enhancement_stft2/processed/AIhub/test
+    inference_dir: /data/mixed_korean_recordroom_test
+    description: 'recordroom Training set, enhance with wavlm, unfreeze wavLM !' #and UNI-directional LSTM'
   
   modelrc: 
     model: SepRNN

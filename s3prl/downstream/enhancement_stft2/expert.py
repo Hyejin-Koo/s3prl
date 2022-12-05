@@ -70,39 +70,39 @@ class DownstreamExpert(nn.Module):
         self.modelrc = downstream_expert["modelrc"]
         self.expdir = expdir
 
-#        self.train_dataset = SeparationDataset(
-#                data_dir=self.loaderrc["train_dir"],
-#                rate=self.datarc['rate'],
-#                src=self.datarc['src'],
-#                tgt=self.datarc['tgt'],
-#                n_fft=self.datarc['n_fft'],
-#                hop_length=self.datarc['hop_length'],
-#                win_length=self.datarc['win_length'],
-#                window=self.datarc['window'],
-#                center=self.datarc['center'],
-#            )
-#        self.dev_dataset = SeparationDataset(
-#                data_dir=self.loaderrc["dev_dir"],
-#                rate=self.datarc['rate'],
-#                src=self.datarc['src'],
-#                tgt=self.datarc['tgt'],
-#                n_fft=self.datarc['n_fft'],
-#                hop_length=self.datarc['hop_length'],
-#                win_length=self.datarc['win_length'],
-#                window=self.datarc['window'],
-#                center=self.datarc['center'],
-#        )
-#        self.test_dataset = SeparationDataset(
-#                data_dir=self.loaderrc["test_dir"],
-#                rate=self.datarc['rate'],
-#                src=self.datarc['src'],
-#                tgt=self.datarc['tgt'],
-#                n_fft=self.datarc['n_fft'],
-#                hop_length=self.datarc['hop_length'],
-#                win_length=self.datarc['win_length'],
-#                window=self.datarc['window'],
-#                center=self.datarc['center'],
-#        )
+        self.train_dataset = SeparationDataset(
+                data_dir=self.loaderrc["train_dir"],
+                rate=self.datarc['rate'],
+                src=self.datarc['src'],
+                tgt=self.datarc['tgt'],
+                n_fft=self.datarc['n_fft'],
+                hop_length=self.datarc['hop_length'],
+                win_length=self.datarc['win_length'],
+                window=self.datarc['window'],
+                center=self.datarc['center'],
+            )
+        self.dev_dataset = SeparationDataset(
+                data_dir=self.loaderrc["dev_dir"],
+                rate=self.datarc['rate'],
+                src=self.datarc['src'],
+                tgt=self.datarc['tgt'],
+                n_fft=self.datarc['n_fft'],
+                hop_length=self.datarc['hop_length'],
+                win_length=self.datarc['win_length'],
+                window=self.datarc['window'],
+                center=self.datarc['center'],
+        )
+        self.test_dataset = SeparationDataset(
+                data_dir=self.loaderrc["test_dir"],
+                rate=self.datarc['rate'],
+                src=self.datarc['src'],
+                tgt=self.datarc['tgt'],
+                n_fft=self.datarc['n_fft'],
+                hop_length=self.datarc['hop_length'],
+                win_length=self.datarc['win_length'],
+                window=self.datarc['window'],
+                center=self.datarc['center'],
+        )
         self.inference_dataset = SeparationInferenceDataset(
                 data_dir=self.loaderrc["inference_dir"],
                 rate=self.datarc['rate'],
@@ -113,6 +113,7 @@ class DownstreamExpert(nn.Module):
                 window=self.datarc['window'],
                 center=self.datarc['center'],
         )
+        
         if self.modelrc["model"] == "SepRNN":
             self.model = SepRNN(
                 input_dim=self.upstream_dim,
@@ -258,6 +259,7 @@ class DownstreamExpert(nn.Module):
             # assert len(wav_length) == 1
         if len(wav_length) != self.loaderrc['eval_batchsize']:
             print('dev/eval batch is not 1')
+            import pdb; pdb.set_trace()
 
 
             # reconstruct the signal using iSTFT
@@ -300,25 +302,24 @@ class DownstreamExpert(nn.Module):
 #                    raise ValueError("Metric type not defined.")
 
         assert 'batch_id' in kwargs
-#        if mode == 'test':
-        if True:
-            PATH = '/root/inference/8k-wavlm'
-            mix_wav, hypo_wav = mix_np, predict_srcs_np
+        #if mode == 'inference':
+        PATH = '/home/koo/enhancelink/enhancedoutput_wavlm'
+        mix_wav, hypo_wav = mix_np, predict_srcs_np
 #                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
-#                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None)  
+#                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None) 
 #                hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
-            utt = uttname_list[0]
-#                import pdb; pdb.set_trace()
-#            soundfile.write(os.path.join(PATH,'mix',utt.split('/')[:-4]+'_mix.wav'),mix_wav.T, self.datarc['rate'])
+        utt = uttname_list[0]
+        utt = utt.split('/')[-1]
+        utt = utt.split('.wav')[0]
+        soundfile.write(os.path.join(PATH,'mix',utt+'_mix.wav'),mix_wav.T, self.datarc['rate'])
 #            soundfile.write(os.path.join(PATH,'ref',utt+'_ref.wav'),ref_wav.T, self.datarc['rate'])
-            soundfile.write(os.path.join(PATH,'clean',utt.split('/')[-1][:-4]+'_hypo.wav'),hypo_wav.T, self.datarc['rate'])
-#        else:
-        if True:
+        soundfile.write(os.path.join(PATH,'hypo',utt+'_hypo.wav'),hypo_wav.T, self.datarc['rate'])
+        #else:
 #            if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
-           records['mix'].append(mix_np)
-           records['hypo'].append(predict_srcs_np)
+        records['mix'].append(mix_np)
+        records['hypo'].append(predict_srcs_np)
 #               records['ref'].append(gt_srcs_np)
-           records['uttname'].append(uttname_list[0])
+        records['uttname'].append(uttname_list[0])
 
 #        if self.loss_type == "MSE" or self.loss_type == "L1":
 #            loss = self.objective.compute_loss(mask_list, feat_length, source_attr, target_attr)
@@ -407,7 +408,7 @@ class DownstreamExpert(nn.Module):
                 logger.add_audio('step{:06d}_{}_ref.wav'.format(global_step, utt), ref_wav, global_step=global_step, sample_rate=self.datarc['rate'])
                 logger.add_audio('step{:06d}_{}_hypo.wav'.format(global_step, utt), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
 
-            return save_ckp
+            return save_ckpt
             
         else: #added for inference
             for s in ['mix', 'hypo', 'uttname']:
@@ -418,9 +419,9 @@ class DownstreamExpert(nn.Module):
                 mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
 
                 hypo_wav = librosa.util.normalize(hypo_wav, norm=np.inf, axis=None)
-                logger.add_audio('{}'.format(utt), mix_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                logger.add_audio('step{:06d}_{}_mix.wav'.format(global_step, utt), mix_wav, global_step=global_step, sample_rate=self.datarc['rate'])
                 #logger.add_audio('step{:06d}_{}_ref.wav'.format(global_step, utt), ref_wav, global_step=global_step, sample_rate=self.datarc['rate'])
-                logger.add_audio('{}_hypo.wav'.format(utt[:-4]), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
+                logger.add_audio('step{:06d}_{}_hypo.wav'.format(global_step, utt), hypo_wav, global_step=global_step, sample_rate=self.datarc['rate'])
 
 
     def forward(self, mode, features, uttname_list, source_attr, source_wav, target_attr, target_wav_list, feat_length, wav_length, records, **kwargs):
@@ -481,7 +482,8 @@ class DownstreamExpert(nn.Module):
         # match the feature length to STFT feature length
         features = match_length(features, feat_length)
         features = pack_sequence(features)
-        mask_list = self.model( ) #features)
+        mask_list = self.model(features)
+#        import pdb; pdb.set_trace()
         assert len(mask_list) == 1
 
         # evaluate the enhancement quality of predict sources
@@ -512,6 +514,7 @@ class DownstreamExpert(nn.Module):
             predict_srcs_np = np.expand_dims(predict_srcs_np, axis=0)
             gt_srcs_np = torch.cat(target_wav_list, 0).data.cpu().numpy()
             mix_np = source_wav.data.cpu().numpy()
+#            import pdb; pdb.set_trace()
             utt_metrics = get_metrics(
                 mix_np,
                 gt_srcs_np,
@@ -544,7 +547,7 @@ class DownstreamExpert(nn.Module):
 
             assert 'batch_id' in kwargs
             if mode == 'test':
-                PATH = '/home/koo/enhancelink/enhancedoutput_stft'
+                PATH = '/home/koo/enhancelink/enhancedoutput_8kwavlm'
                 mix_wav, ref_wav, hypo_wav = mix_np, gt_srcs_np, predict_srcs_np
 #                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
 #                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None) 
@@ -554,12 +557,12 @@ class DownstreamExpert(nn.Module):
                 soundfile.write(os.path.join(PATH,'mix',utt+'_mix.wav'),mix_wav.T, self.datarc['rate'])
                 soundfile.write(os.path.join(PATH,'ref',utt+'_ref.wav'),ref_wav.T, self.datarc['rate'])
                 soundfile.write(os.path.join(PATH,'hypo',utt+'_hypo.wav'),hypo_wav.T, self.datarc['rate'])
-            else:
-                if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
-                   records['mix'].append(mix_np)
-                   records['hypo'].append(predict_srcs_np)
-                   records['ref'].append(gt_srcs_np)
-                   records['uttname'].append(uttname_list[0])
+            
+            if kwargs['batch_id'] % 1000 == 0: # Save the prediction every 1000 examples
+                records['mix'].append(mix_np)
+                records['hypo'].append(predict_srcs_np)
+                records['ref'].append(gt_srcs_np)
+                records['uttname'].append(uttname_list[0])
 
         if self.loss_type == "MSE" or self.loss_type == "L1":
             loss = self.objective.compute_loss(mask_list, feat_length, source_attr, target_attr)

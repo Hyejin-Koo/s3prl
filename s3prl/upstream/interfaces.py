@@ -138,6 +138,7 @@ class Featurizer(nn.Module):
         feature_selection: str = "hidden_states",
         upstream_device: str = "cuda",
         layer_selection: int = None,
+        model_freeze: int = None, # add
         normalize: bool = False,
         **kwargs,
     ):
@@ -167,6 +168,7 @@ class Featurizer(nn.Module):
                 raise ValueError
         self.feature_selection = feature_selection
         self.layer_selection = layer_selection
+        self.model_freeze = model_freeze # add
         self.normalize = normalize
 
         feature = self._select_feature(paired_features)

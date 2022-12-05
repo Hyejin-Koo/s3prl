@@ -21,7 +21,7 @@ from torch.utils.data.dataset import Dataset
 
 import librosa
 
-SAMPLE_RATE = 8000 #16000
+SAMPLE_RATE = 16000
 
 class SeparationDataset(Dataset):
     def __init__(
@@ -97,7 +97,7 @@ class SeparationDataset(Dataset):
             for line in content:
                 line = line.strip('\n')
                 uttname, path = line.split()
-                if cond == "clean" and "AIhub2" in self.data_dir : #and 'test' not in self.data_dir: ## bad..
+                if cond == "clean" and "AIhub" in self.data_dir : #and 'test' not in self.data_dir: ## bad..
                     if '/data/noisy_AIhub' not in path and 'korean' not in path:
                         directory, filename = os.path.split(path)
                         postdir, subdir = os.path.split(directory)
