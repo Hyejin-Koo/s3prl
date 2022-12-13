@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.nn.modules.loss import _Loss
 from asteroid.losses import PITLossWrapper
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class EnhLoss(object):
     def __init__(self, num_srcs, loss_type, mask_type, log='none'):
