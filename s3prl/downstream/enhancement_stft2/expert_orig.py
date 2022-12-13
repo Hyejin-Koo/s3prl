@@ -33,12 +33,7 @@ from .dataset import SeparationDataset, SeparationInferenceDataset
 from asteroid.metrics import get_metrics
 from .loss import EnhLoss, SISDRLoss
 
-# -------------# add
-from torch.distributed import is_initialized
-from torch.utils.data import DistributedSampler
-
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 COMPUTE_METRICS = ["si_sdr", "stoi", "pesq"]
 EPS = 1e-10
@@ -141,12 +136,10 @@ class DownstreamExpert(nn.Module):
         self.register_buffer("best_score", torch.ones(1) * -10000)
 
     def _get_train_dataloader(self, dataset):
-        sampler = DistributedSampler(dataset) if is_initialized() else None
         return DataLoader(
             dataset,
             batch_size=self.loaderrc["train_batchsize"],
-            shuffle=(sampler is None), #True,
-            sampler=sampler, #add
+            shuffle=True,
             num_workers=self.loaderrc["num_workers"],
             drop_last=False,
             pin_memory=True,
