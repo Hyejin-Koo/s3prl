@@ -153,6 +153,24 @@ class DownstreamExpert(nn.Module):
             collate_fn=dataset.collate_fn,
         )
 
+
+
+    def _get_dev_dataloader(self, dataset): ## ADD
+        sampler = DistributedSampler(dataset) if is_initialized() else None
+
+        return DataLoader(
+            dataset,
+            batch_size=self.loaderrc["eval_batchsize"],
+            shuffle=False,
+            sampler=sampler,
+            num_workers=self.loaderrc["num_workers"],
+            drop_last=False,
+            pin_memory=True,
+            collate_fn=dataset.collate_fn,
+        )
+
+
+
     def _get_eval_dataloader(self, dataset):
         return DataLoader(
             dataset,
@@ -181,7 +199,7 @@ class DownstreamExpert(nn.Module):
         if mode == "train":
             return self._get_train_dataloader(self.train_dataset)
         elif mode == "dev":
-            return self._get_eval_dataloader(self.dev_dataset)
+            return self._get_dev_dataloader(self.dev_dataset) #modify eval-> dev ##ADD
         elif mode == "test":
             return self._get_eval_dataloader(self.test_dataset)
         else: # mode == "enhance_inference":
@@ -499,10 +517,15 @@ class DownstreamExpert(nn.Module):
                 predict_stfts = torch.squeeze(mask_list[0].cpu() * source_attr['stft'])
                 predict_stfts_np = np.transpose(predict_stfts.data.numpy())
             elif self.log == 'log1p':
+#                import pdb; pdb.set_trace()
                 phase = source_attr['stft'] / (source_attr['stft'].abs() + EPS)
-                predict_stfts = torch.expm1(mask_list[0].cpu() * torch.log1p(source_attr['stft'].abs())) * phase
-                predict_stfts = torch.squeeze(predict_stfts)
-                predict_stfts_np = np.transpose(predict_stfts.data.numpy())
+                if mode == 'dev': # for ddp
+                    predict_stfts = torch.expm1(mask_list[0] * torch.log1p(source_attr['stft'].abs())) * phase
+                else: # test
+                    predict_stfts = torch.expm1(mask_list[0].cpu() * torch.log1p(source_attr['stft'].abs())) * phase # orig code
+                predict_stfts = torch.squeeze(predict_stfts) 
+                #predict_stfts_np = np.transpose(predict_stfts.data.numpy()) # orig code
+                predict_stfts_np = np.transpose(predict_stfts.cpu().data.numpy())
             else:
                 raise ValueError("log type not defined.")
 
@@ -517,7 +540,7 @@ class DownstreamExpert(nn.Module):
                 hop_length=self.datarc['hop_length'],
                 win_length=self.datarc['win_length'], 
                 window=self.datarc['window'], 
-                center=self.datarc['center']), size=wav_length[0])
+                center=self.datarc['center']), size=wav_length[0].cpu()) # .cpu is added
             predict_srcs_np = np.expand_dims(predict_srcs_np, axis=0)
             gt_srcs_np = torch.cat(target_wav_list, 0).data.cpu().numpy()
             mix_np = source_wav.data.cpu().numpy()
@@ -554,7 +577,7 @@ class DownstreamExpert(nn.Module):
 
             assert 'batch_id' in kwargs
             if mode == 'test':
-                PATH = '/home/koo/enhancelink/enhancedoutput_8kwavlm'
+                PATH = '/data/private/inferenceoutput/unfreezeDDP'
                 mix_wav, ref_wav, hypo_wav = mix_np, gt_srcs_np, predict_srcs_np
 #                mix_wav = librosa.util.normalize(mix_wav, norm=np.inf, axis=None)
 #                ref_wav = librosa.util.normalize(ref_wav, norm=np.inf, axis=None) 
